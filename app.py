@@ -7,6 +7,9 @@ from collections import deque
 BROKER = "20.251.215.215"
 PORT = 1883
 
+st.write("MQTT connected:", client.is_connected())
+
+
 TOPIC_TIME_EVENTS = "esp32/time_events"   # <- ton ESP32 publie ici
 TOPIC_CAPTEURS     = "esp32/capteurs"     # <- optionnel, si tu veux aussi voir dist/temp/hum
 
