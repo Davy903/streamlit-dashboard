@@ -7,7 +7,6 @@ from collections import deque
 BROKER = "20.251.215.215"
 PORT = 1883
 
-st.write("MQTT connected:", client.is_connected())
 
 
 TOPIC_TIME_EVENTS = "esp32/time_events"   # <- ton ESP32 publie ici
@@ -63,7 +62,9 @@ def on_message(client, userdata, msg):
 def mqtt_start():
     client = mqtt.Client()
     client.on_message = on_message
-    client.connect(BROKER, PORT, 60)
+    client.connect(BROKER, 1883, 60)
+    st.write("MQTT connected:", client.is_connected())
+
     client.subscribe([(TOPIC_TIME_EVENTS, 0), (TOPIC_CAPTEURS, 0)])  # capteurs optionnel
     client.loop_start()
     return client
