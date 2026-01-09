@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import time
 
-FIREBASE_DB_URL = ""
+FIREBASE_DB_URL = "https://voitureesp32-default-rtdb.europe-west1.firebasedatabase.app/"
 
 st.set_page_config(page_title="Timer events (Firebase)", layout="centered")
 st.title("⏱ Timer events (Firebase)")
