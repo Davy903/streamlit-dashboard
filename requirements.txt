@@ -1,2 +1,5 @@
 streamlit
 paho-mqtt
+requests
+pandas
+streamlit-autorefresh
