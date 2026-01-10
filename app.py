@@ -14,24 +14,7 @@ def fetch_firebase():
     r.raise_for_status()
     return r.json()
 
-def find_node_with_keys(obj, keys=("best", "last10")):
-    """Retourne le premier dict trouvé qui contient au moins une des clés demandées."""
-    if isinstance(obj, dict):
-        if any(k in obj for k in keys):
-            return obj
-        for v in obj.values():
-            found = find_node_with_keys(v, keys)
-            if found is not None:
-                return found
-    elif isinstance(obj, list):
-        for v in obj:
-            found = find_node_with_keys(v, keys)
-            if found is not None:
-                return found
-    return None
-
 def to_list(x):
-    """last10 peut être list ou dict (push ids)."""
     if x is None:
         return []
     if isinstance(x, list):
@@ -40,73 +23,78 @@ def to_list(x):
         return list(x.values())
     return []
 
-def normalize_ts(df, col="ts"):
-    """
-    Ajoute une colonne ts_dt (datetime) si ts existe.
-    Gère ts en secondes ou millisecondes.
-    """
-    if col not in df.columns:
-        return df
-
-    ts = pd.to_numeric(df[col], errors="coerce")
-    # Heuristique: si > 1e12 on considère ms, sinon s
-    is_ms = ts.dropna().gt(1e12).any()
+def normalize_ts(series):
+    s = pd.to_numeric(series, errors="coerce")
+    # ms si une valeur dépasse 1e12
+    is_ms = s.dropna().gt(1e12).any()
     unit = "ms" if is_ms else "s"
-    df["ts_dt"] = pd.to_datetime(ts, unit=unit, errors="coerce", utc=True).dt.tz_convert("Europe/Brussels")
-    return df
+    dt = pd.to_datetime(s, unit=unit, errors="coerce", utc=True).dt.tz_convert("Europe/Brussels")
+    return s, dt
 
-st.title("⏱️ Timing (Firebase)")
+st.title("⏱️ Timing (Firebase) — Global")
 
-data = fetch_firebase()
-node = find_node_with_keys(data, keys=("best", "last10"))
+data = fetch_firebase() or {}
+timing = data if isinstance(data, dict) else {}
 
-if node is None:
-    st.error("Je ne trouve pas 'best' ou 'last10' dans timing.json")
-    st.subheader("DEBUG : contenu timing.json")
-    st.json(data)
-    st.stop()
+# --------- Collecte globale (toutes sessions) ----------
+all_last = []
+all_best = []
 
-best = node.get("best", {}) or {}
-last10_raw = node.get("last10", [])
+for timer_id, session in timing.items():
+    if not isinstance(session, dict):
+        continue
 
-last10 = to_list(last10_raw)
+    best = session.get("best")
+    if isinstance(best, dict) and best:
+        b = best.copy()
+        b.setdefault("timer_id", timer_id)
+        all_best.append(b)
 
-# --- Tableau: toujours les 10 plus récents selon ts ---
-st.subheader("🕒 Last 10 (les plus récents)")
+    last10 = to_list(session.get("last10"))
+    for item in last10:
+        if isinstance(item, dict) and item:
+            it = item.copy()
+            it.setdefault("timer_id", timer_id)
+            all_last.append(it)
 
-if last10:
-    df = pd.DataFrame(last10)
+# --------- Best global (selon ts) ----------
+st.subheader("🏆 Best (le plus récent)")
+
+if all_best:
+    dfb = pd.DataFrame(all_best)
+    if "ts" in dfb.columns:
+        ts_num, ts_dt = normalize_ts(dfb["ts"])
+        dfb["ts_num"] = ts_num
+        dfb["date"] = ts_dt.dt.strftime("%Y-%m-%d %H:%M:%S")
+        dfb = dfb.sort_values("ts_num", ascending=False, na_position="last")
+        best_row = dfb.iloc[0].drop(labels=[c for c in ["ts_num"] if c in dfb.columns]).to_dict()
+        st.caption(f"Best enregistré le : {dfb.iloc[0].get('date', '')}")
+        st.json(best_row)
+    else:
+        st.json(all_best[0])
+else:
+    st.info("Aucun best trouvé")
+
+# --------- Last 10 global (selon ts) ----------
+st.subheader("🕒 Last 10 (les plus récents, toutes sessions)")
+
+if all_last:
+    df = pd.DataFrame(all_last)
 
     if "ts" in df.columns:
-        df = normalize_ts(df, "ts")
-        df = df.sort_values("ts", ascending=False, na_position="last")
-        df = df.head(10)  # ✅ garde vraiment les 10 plus récents
-        # Option: mettre la date lisible devant
-        if "ts_dt" in df.columns:
-            df.insert(0, "date", df["ts_dt"].dt.strftime("%Y-%m-%d %H:%M:%S"))
+        ts_num, ts_dt = normalize_ts(df["ts"])
+        df["ts_num"] = ts_num
+        df["date"] = ts_dt.dt.strftime("%Y-%m-%d %H:%M:%S")
+        df = df.sort_values("ts_num", ascending=False, na_position="last").head(10)
+        df = df.drop(columns=["ts_num"])
+        # met date devant
+        cols = ["date"] + [c for c in df.columns if c != "date"]
+        df = df[cols]
     else:
-        # Pas de ts => on garde l'ordre reçu, mais on limite à 10
         df = df.head(10)
 
     df = df.reset_index(drop=True)
     df.insert(0, "N°", df.index + 1)
     st.dataframe(df, use_container_width=True)
 else:
-    st.info("Aucune donnée dans last10")
-
-# --- Best (et sa date si possible) ---
-st.subheader("🏆 Best")
-
-if best:
-    # Si best contient un ts, on affiche une date lisible
-    if isinstance(best, dict) and "ts" in best:
-        ts = pd.to_numeric(pd.Series([best.get("ts")]), errors="coerce")
-        is_ms = ts.dropna().gt(1e12).any()
-        unit = "ms" if is_ms else "s"
-        best_dt = pd.to_datetime(ts.iloc[0], unit=unit, errors="coerce", utc=True)
-        if pd.notna(best_dt):
-            best_dt = best_dt.tz_convert("Europe/Brussels")
-            st.caption(f"Best enregistré le : {best_dt.strftime('%Y-%m-%d %H:%M:%S')}")
-    st.json(best)
-else:
-    st.info("Aucun best disponible")
+    st.info("Aucune donnée last10 trouvée")
