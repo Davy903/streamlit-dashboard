@@ -14,11 +14,11 @@ def fetch():
     r.raise_for_status()
     return r.json()
 
-st.title("⏱️ Timing (Firebase)")
+st.title("⏱️ 10 derniers temps (toutes sessions)")
 
 data = fetch()
 
-# payload robuste : dict direct OU liste [null, {...}]
+# Cas: [null, {...}] -> on prend le dernier dict non-null
 payload = {}
 if isinstance(data, list):
     payload = next((x for x in reversed(data) if isinstance(x, dict)), {})
@@ -26,6 +26,8 @@ elif isinstance(data, dict):
     payload = data
 
 last10 = payload.get("last10", [])
+
+# last10 peut être list OU dict
 if isinstance(last10, dict):
     last10 = list(last10.values())
 
@@ -35,53 +37,24 @@ if not isinstance(last10, list) or len(last10) == 0:
 
 df = pd.DataFrame(last10)
 
-# Harmoniser noms si ton JSON change (lap_* vs time_*)
-if "lap_s" in df.columns and "time_s" not in df.columns:
-    df = df.rename(columns={"lap_s": "time_s"})
-if "lap_index" in df.columns and "time_index" not in df.columns:
-    df = df.rename(columns={"lap_index": "time_index"})
-
-# Tri global par timestamp (comme ton code)
+# Tri global par timestamp
 if "ts" in df.columns:
-    df = df.sort_values("ts", ascending=False).reset_index(drop=True)
+    df = df.sort_values("ts", ascending=False)
 
-# ----------------------------
-# 🏆 Best de la dernière session
-# ----------------------------
-st.subheader("🏆 Best (dernière session)")
+# On garde 10 lignes max (au cas où Firebase en contient plus)
+df = df.head(10).reset_index(drop=True)
 
-best_last_session = None
-if "timer_id" in df.columns and "time_s" in df.columns:
-    latest_timer_id = df["timer_id"].max()  # dernière session = id le plus grand
-    df_latest = df[df["timer_id"] == latest_timer_id].copy()
+# Colonne 1..10 pour affichage
+df.insert(0, "N°", df.index + 1)
 
-    if not df_latest.empty:
-        row = df_latest.loc[df_latest["time_s"].idxmin()]  # meilleur temps = min time_s
-        best_last_session = {
-            "timer_id": int(row["timer_id"]) if pd.notna(row["timer_id"]) else None,
-            "time_index": int(row["time_index"]) if "time_index" in row and pd.notna(row["time_index"]) else None,
-            "time_s": float(row["time_s"]) if pd.notna(row["time_s"]) else None,
-            "ts": int(row["ts"]) if "ts" in row and pd.notna(row["ts"]) else None,
-        }
-
-if best_last_session:
-    st.json(best_last_session)
-else:
-    st.info("Impossible de calculer le best (pas assez de données).")
-
-# ----------------------------
-# 🕒 10 derniers temps (toutes sessions)
-# ----------------------------
-st.subheader("🕒 10 derniers temps (toutes sessions)")
-
-df_show = df.head(10).copy().reset_index(drop=True)
-df_show.insert(0, "N°", df_show.index + 1)
-
-df_show = df_show.rename(columns={
+# Renommer selon ton format (adapte si nécessaire)
+df = df.rename(columns={
     "timer_id": "Session (timer_id)",
     "time_index": "Index",
     "time_s": "Temps (s)",
+    "lap_index": "Index",
+    "lap_s": "Temps (s)",
     "ts": "Timestamp"
 })
 
-st.dataframe(df_show, use_container_width=True)
+st.dataframe(df, use_container_width=True)
