@@ -3,47 +3,47 @@ import requests
 import pandas as pd
 from streamlit_autorefresh import st_autorefresh
 
-# ─────────────────────────────────────
-# CONFIG
-# ─────────────────────────────────────
-BASE = "https://voitureesp32-default-rtdb.europe-west1.firebasedatabase.app"
-PATH = "timing"
-URL = f"{BASE}/{PATH}.json"
-
-# refresh auto toutes les 1s
 st_autorefresh(interval=1000, key="firebase_refresh")
 
-# ─────────────────────────────────────
-# FIREBASE FETCH
-# ─────────────────────────────────────
+BASE = "https://voitureesp32-default-rtdb.europe-west1.firebasedatabase.app"
+URL = f"{BASE}/timing.json"
+
 @st.cache_data(ttl=1)
-def fetch_timing():
+def fetch():
     r = requests.get(URL, timeout=10)
     r.raise_for_status()
     return r.json()
 
-# ─────────────────────────────────────
-# UI
-# ─────────────────────────────────────
 st.title("⏱️ Timing (Firebase)")
 
 try:
-    data = fetch_timing() or {}
+    data = fetch() or {}
 
-    # Cas Firebase : parfois [null, {...}]
-    if isinstance(data, list):
-        payload = data[1] if len(data) > 1 and isinstance(data[1], dict) else {}
-    elif isinstance(data, dict):
-        payload = data
-    else:
-        payload = {}
+    # data doit être un dict: {"4": {...}, "5": {...}, ...}
+    if not isinstance(data, dict) or len(data) == 0:
+        st.info("Aucune donnée dans /timing")
+        st.stop()
+
+    # 🔥 prendre le timer_id le plus grand
+    timer_ids = []
+    for k in data.keys():
+        try:
+            timer_ids.append(int(k))
+        except:
+            pass
+
+    if len(timer_ids) == 0:
+        st.error("Aucun timer_id numérique trouvé dans /timing")
+        st.json(data)
+        st.stop()
+
+    latest_id = max(timer_ids)
+    payload = data.get(str(latest_id), {}) or {}
 
     best = payload.get("best", {})
     last10 = payload.get("last10", [])
 
-    # Si last10 est un dict => list
-    if isinstance(last10, dict):
-        last10 = list(last10.values())
+    st.caption(f"Dernière session détectée : timer_id = {latest_id}")
 
     # ───── BEST ─────
     st.subheader("🏆 Best")
@@ -54,7 +54,10 @@ try:
 
     # ───── LAST 10 ─────
     st.subheader("🕒 Last 10")
-    if isinstance(last10, list) and len(last10) > 0:
+    if isinstance(last10, dict):
+        last10 = list(last10.values())
+
+    if isinstance(last10, list) and last10:
         df = pd.DataFrame(last10)
 
         # tri par timestamp décroissant si présent
@@ -62,22 +65,17 @@ try:
             df["ts"] = pd.to_numeric(df["ts"], errors="coerce")
             df = df.sort_values("ts", ascending=False)
 
-        # Lap n° 1..N
         df = df.reset_index(drop=True)
         df.insert(0, "Lap n°", df.index + 1)
 
-        # renommage colonnes lisibles (selon ton format)
         df = df.rename(columns={
+            "lap_index": "Index",
             "lap_s": "Temps (s)",
+            "time_index": "Index",
             "time_s": "Temps (s)",
             "timer_id": "Timer ID",
-            "time_index": "Index",
             "ts": "Timestamp"
         })
-
-        # optionnel : enlever la colonne lap_index si elle existe
-        if "lap_index" in df.columns:
-            df = df.drop(columns=["lap_index"])
 
         st.dataframe(df, use_container_width=True)
     else:
